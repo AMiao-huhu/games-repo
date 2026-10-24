@@ -1,5 +1,6 @@
 ﻿name = "ami-game"
 compatibility_date = "2026-10-24"
+workers_dev = true  # 添加这一行，开启默认公网域名
 
 [assets]
 directory = "./ami-autumn"
