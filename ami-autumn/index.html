@@ -1,0 +1,308 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+<title>阿杪的山野信笺</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+html,body{width:100%;height:100%;overflow:hidden;background:#000;}
+#bg{position:absolute;inset:0;background-size:cover;background-position:center;transition:opacity 0.8s ease;z-index:1;}
+#starLayer{position:absolute;inset:0;z-index:2;pointer-events:none;}
+canvas{position:absolute;inset:0;z-index:3;}
+#achan{position:absolute;bottom:70px;left:18px;z-index:6;transition:transform 0.3s, filter 0.3s;pointer-events:none;}
+#achan img{display:block;height:auto;}
+#btnSwitch{position:absolute;bottom:40px;right:24px;z-index:10;font-family:system-ui,serif;font-size:16px;color:#fff;opacity:0.35;background:transparent;border:none;cursor:pointer;transition:0.2s;}
+#btnSwitch:hover{opacity:0.65;}
+#slogan{position:absolute;bottom:42px;left:150px;z-index:9;font-family:system-ui,serif;font-size:14px;color:#fff;opacity:0.28;transition:opacity 1.2s ease;pointer-events:none;}
+</style>
+</head>
+<body>
+<div id="gameWrap" style="position:relative;width:100vw;height:100vh;overflow:hidden;">
+  <div id="bg"></div>
+  <div id="starLayer"></div>
+  <canvas id="particleCanvas"></canvas>
+  <div id="achan"><img id="achanImg" alt="阿杪" /></div>
+  <div id="slogan"></div>
+  <button id="btnSwitch">🍁秋枫</button>
+</div>
+
+<script>
+// ==========【在这里替换你的资源链接】==========
+const ASSETS = {
+  bgDayFengye : "枫叶谷背景.png",
+  bgDayHudian : "高山湖甸背景.png",
+  bgNightFengye: "夜景枫叶谷背景.png",
+  bgNightHudian: "夜景湖甸背景.png",
+  achanFengye : "阿杪立绘・枫叶谷.png",
+  achanHudian : "阿杪立绘・湖甸.png",
+  bgmFengye  : "bgm_fengye.mp3",
+  bgmHudian  : "bgm_hudian.mp3",
+  bgmNight   : "bgm_night.mp3"
+};
+const CONFIG = {
+  maxParticles:80,
+  gravity:0.045,
+  baseWind:0.02,
+  maxWind:0.22,
+  achanHeightPx: 260          // 阿杪在画面中的高度（手机适配用）
+};
+const SLOGANS = [
+  "风会带走所有烦躁",
+  "在这里，慢慢放空就好",
+  "山野温柔，不负人间"
+];
+// =============================================
+
+const bgEl = document.getElementById("bg");
+const starLayer = document.getElementById("starLayer");
+const canvas = document.getElementById("particleCanvas");
+const ctx = canvas.getContext("2d");
+const btnSwitch = document.getElementById("btnSwitch");
+const sloganEl = document.getElementById("slogan");
+const achanEl = document.getElementById("achan");
+const achanImg = document.getElementById("achanImg");
+
+let W,H;
+let sceneType = "fengye";      // 手动场景：fengye / hudian
+let isNight = false;           // 自动：是否夜晚
+let wind = 0;
+let isLongPress = false;
+let pressStartT = 0;
+let audioUnlocked = false;
+let audio = null;
+let particles = [];
+let stars = [];
+
+// 判断白天/夜晚（18:00-06:00 为夜晚）
+function judgeNight(){
+  const h = new Date().getHours();
+  return (h >= 18 || h < 6);
+}
+
+// 当前完整状态
+function getState(){
+  return sceneType + (isNight ? "-night" : "-day");
+}
+function getBg(){
+  if(sceneType === "fengye"){
+    return isNight ? ASSETS.bgNightFengye : ASSETS.bgDayFengye;
+  }
+  return isNight ? ASSETS.bgNightHudian : ASSETS.bgDayHudian;
+}
+function getBgm(){
+  if(isNight) return ASSETS.bgmNight;
+  return sceneType === "fengye" ? ASSETS.bgmFengye : ASSETS.bgmHudian;
+}
+function getAchan(){
+  return sceneType === "fengye" ? ASSETS.achanFengye : ASSETS.achanHudian;
+}
+function getParticleCfg(){
+  if(sceneType === "fengye"){
+    return { color:"#dd4433", type:"leaf" };
+  }
+  return { color:"#eef4ff", type:"cloud" };
+}
+
+// 画布自适应
+function resize(){
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width = W;
+  canvas.height = H;
+  // 阿杪适配：约占屏幕高度 26%
+  const ah = Math.round(H * 0.26);
+  achanEl.style.width = "auto";
+  achanImg.style.height = ah + "px";
+}
+
+// 星星粒子（夜晚自动生成）
+function buildStars(n){
+  stars = [];
+  for(let i=0;i<n;i++){
+    stars.push({
+      x: Math.random()*W,
+      y: Math.random()*H*0.8,
+      r: Math.random()*1.6 + 0.4,
+      tw: Math.random()*Math.PI*2
+    });
+  }
+}
+
+// 粒子类
+class Particle{
+  constructor(x,y){
+    const cfg = getParticleCfg();
+    this.x = x; this.y = y;
+    this.vx = (Math.random()-0.5)*0.6;
+    this.vy = Math.random()*0.8 + 0.3;
+    this.size = Math.random()*14 + 6;
+    this.rot = Math.random()*Math.PI*2;
+    this.rotSpeed = (Math.random()-0.5)*0.06;
+    this.alpha = 0.82;
+    this.color = cfg.color;
+    this.type = cfg.type;
+  }
+  update(){
+    this.vx += wind;
+    this.vy += CONFIG.gravity;
+    this.x += this.vx; this.y += this.vy;
+    this.rot += this.rotSpeed;
+    if(this.y > H+20 || this.x < -30 || this.x > W+30) this.alpha = 0;
+  }
+  draw(){
+    ctx.save();
+    ctx.translate(this.x,this.y);
+    ctx.rotate(this.rot);
+    ctx.globalAlpha = this.alpha;
+    ctx.fillStyle = this.color;
+    if(this.type === "leaf"){
+      ctx.beginPath();
+      ctx.ellipse(0,0,this.size,this.size*0.55,0,0,Math.PI*2);
+      ctx.fill();
+    }else{
+      ctx.beginPath();
+      ctx.arc(0,0,this.size*0.45,0,Math.PI*2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+}
+function spawnParticle(x,y){
+  if(particles.length >= CONFIG.maxParticles) return;
+  particles.push(new Particle(x,y));
+}
+
+// 应用场景（背景+阿杪+BGM）
+function applyScene(){
+  bgEl.style.opacity = 0;
+  setTimeout(()=>{
+    bgEl.style.backgroundImage = `url(${getBg()})`;
+    achanImg.src = getAchan();
+    btnSwitch.innerText = sceneType === "fengye" ? "🍁秋枫" : "☁️湖甸";
+    bgEl.style.opacity = 1;
+  },400);
+  if(audioUnlocked){
+    if(audio) audio.pause();
+    audio = new Audio(getBgm());
+    audio.loop = true; audio.volume = 0.26;
+    audio.play().catch(e=>{});
+  }
+}
+
+// 解锁音频（微信必须用户交互）
+function unlockAudio(){
+  if(audioUnlocked) return;
+  audioUnlocked = true;
+  audio = new Audio(getBgm());
+  audio.loop = true; audio.volume = 0.26;
+  audio.play().catch(e=>{});
+}
+
+// slogan轮换
+function loopSlogan(){
+  let idx = 0;
+  function next(){
+    sloganEl.style.opacity = 0;
+    setTimeout(()=>{
+      idx = (idx+1)%SLOGANS.length;
+      sloganEl.innerText = SLOGANS[idx];
+      sloganEl.style.opacity = 0.28;
+    },1200);
+  }
+  setInterval(next,7500);
+  sloganEl.innerText = SLOGANS[0];
+}
+
+// 触摸/鼠标
+canvas.addEventListener("pointerdown",(e)=>{
+  e.preventDefault();
+  unlockAudio();
+  pressStartT = Date.now();
+  isLongPress = true;
+  spawnParticle(e.clientX,e.clientY);
+  // 阿杪被触摸：轻轻歪头
+  achanEl.style.transform = "rotate(-3deg)";
+});
+canvas.addEventListener("pointermove",(e)=>{
+  if(!isLongPress) return;
+  const dur = Date.now() - pressStartT;
+  wind = CONFIG.baseWind + Math.min(dur/900,1)*CONFIG.maxWind;
+  if(Math.random()>0.65) spawnParticle(e.clientX,e.clientY);
+  // 长按起风：阿杪头发/整体轻微摆动（放大反馈）
+  achanEl.style.transform = "rotate(-3deg) scale(1.04)";
+});
+canvas.addEventListener("pointerup",()=>{
+  isLongPress = false;
+  achanEl.style.transform = "";
+  setTimeout(()=>{ wind *= 0.85; },100);
+});
+canvas.addEventListener("pointercancel",()=>{
+  isLongPress = false;
+  wind = 0;
+  achanEl.style.transform = "";
+});
+btnSwitch.onclick = (e)=>{
+  e.stopPropagation();
+  sceneType = sceneType === "fengye" ? "hudian" : "fengye";
+  applyScene();
+};
+
+// 渲染循环
+function render(){
+  ctx.clearRect(0,0,W,H);
+  // 星星（夜晚）
+  if(isNight && starLayer.style.display !== "block"){
+    starLayer.style.display = "block";
+  } else if(!isNight && starLayer.style.display !== "none"){
+    starLayer.style.display = "none";
+  }
+  drawStars();
+  for(let i=particles.length-1;i>=0;i--){
+    const p = particles[i];
+    p.update(); p.draw();
+    if(p.alpha<=0) particles.splice(i,1);
+  }
+  if(!isLongPress) wind *= 0.97;
+  requestAnimationFrame(render);
+}
+function drawStars(){
+  if(!isNight) return;
+  ctx.save();
+  for(const s of stars){
+    s.tw += 0.03;
+    const a = 0.4 + 0.6*Math.abs(Math.sin(s.tw));
+    ctx.globalAlpha = a;
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath();
+    ctx.arc(s.x,s.y,s.r,0,Math.PI*2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// 初始化 + 定时检查日夜
+function init(){
+  resize();
+  isNight = judgeNight();
+  applyScene();
+  buildStars(90);
+  loopSlogan();
+  render();
+}
+window.addEventListener("resize",resize);
+// 每60秒检查一次时段，跨18点/6点自动切日夜
+setInterval(()=>{
+  const n = judgeNight();
+  if(n !== isNight){
+    isNight = n;
+    if(!isNight) starLayer.style.display = "none";
+    applyScene();
+    if(!isNight){ particles = []; }
+  }
+},60000);
+init();
+</script>
+</body>
+</html>
+ 
